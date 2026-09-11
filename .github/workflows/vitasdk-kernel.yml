@@ -25,7 +25,7 @@ jobs:
             -v "$PWD:/src" \
             -w /src \
             vitasdk/vitasdk:latest \
-            sh -lc 'apk add --no-cache cmake ninja >/dev/null && cmake -S PSVshellPlus_Kernel_VitaSDK -B build-vitasdk -G Ninja && cmake --build build-vitasdk'
+            sh -lc 'cmake --version && ninja --version && cmake -S PSVshellPlus_Kernel_VitaSDK -B build-vitasdk -G Ninja && cmake --build build-vitasdk'
 
       - name: Show artifact
         run: |
