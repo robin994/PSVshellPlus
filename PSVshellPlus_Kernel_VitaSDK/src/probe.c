@@ -53,7 +53,7 @@ static inline uint32_t pmu_read_cycle_counter(void)
     return value;
 }
 
-static uint32_t measure_cpu_mhz(void)
+uint32_t psvsProbeMeasureCpuMhz(void)
 {
     volatile uint32_t sink = 0x12345678u;
     const SceInt64 target_us = 10000;
@@ -128,12 +128,20 @@ void psvsProbeStatus(const char *message, int value)
     probe_log("STATUS %s=%d (0x%08X)\n", message ? message : "?", value, (uint32_t)value);
 }
 
+void psvsProbeExperimentSample(const char *stage, uint32_t raw_mul, uint32_t raw_div,
+                               uint32_t measured_mhz, uint32_t predicted_mhz)
+{
+    probe_log("EXPERIMENT stage=%s raw=%08X:%08X measured=%u predicted=%u t=%lld\n",
+              stage ? stage : "?", raw_mul, raw_div, measured_mhz, predicted_mhz,
+              (long long)ksceKernelGetSystemTimeWide());
+}
+
 void psvsProbeClockEvent(int requested_mhz, int effective_mhz)
 {
     uint32_t bit = sample_bit_for_clock(effective_mhz);
     uint32_t raw_mul = s_baseclk ? s_baseclk[0] : 0xFFFFFFFFu;
     uint32_t raw_div = s_baseclk ? s_baseclk[1] : 0xFFFFFFFFu;
-    uint32_t measured_mhz = measure_cpu_mhz();
+    uint32_t measured_mhz = psvsProbeMeasureCpuMhz();
 
     probe_log("CLOCK requested=%d effective=%d measured=%u raw=%08X:%08X t=%lld\n",
               requested_mhz, effective_mhz, measured_mhz,
