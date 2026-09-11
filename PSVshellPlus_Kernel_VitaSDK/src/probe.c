@@ -5,8 +5,8 @@
 
 #include "probe.h"
 
-#define PROBE_LOG_DIR  "ux0:data/psvshellplus"
-#define PROBE_LOG_PATH "ux0:data/psvshellplus/arm_oc_probe.log"
+#define PROBE_LOG_DIR  "ur0:data/PSVshell"
+#define PROBE_LOG_PATH "ur0:data/PSVshell/arm_oc_probe.log"
 #define BASECLK_DUMP_WORDS 16
 
 static SceUID s_log_fd = -1;
