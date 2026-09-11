@@ -4,9 +4,31 @@ This directory contains an experimental VitaSDK build of the PSVshellPlus kernel
 It is intentionally kept separate from the original Sony/VDSuite project so the upstream
 v1.4 source remains untouched and easy to compare/revert.
 
-## Goals of this milestone
+## Important compatibility status
 
-- Preserve the original `PSVshellPlus_KernelForUser` syscall ABI used by the v1.4 shell.
+**Do not currently use this VitaSDK kernel as a drop-in replacement for the official v1.4
+`PSVshellPlus_Kernel.skprx`.** Hardware testing showed that the experimental kernel starts
+and performs clock measurements, but the official v1.4 shell does not appear in the Quick
+Menu when paired with it. Even after matching the Sony stub library/function NIDs, the
+binary compatibility issue remains.
+
+For a working Quick Menu, keep the official v1.4 trio installed exactly as upstream:
+
+```text
+*KERNEL
+ur0:tai/PSVshellPlus_Kernel.skprx
+
+*main
+ur0:tai/PSVshellPlus_Shell.suprx
+```
+
+and keep `psvshell_plugin.rco` at `ur0:data/PSVshell/psvshell_plugin.rco`.
+
+Further ARM overclock research should use a separate research kernel plugin so the official
+PSVshellPlus kernel/shell ABI remains untouched.
+
+## Research goals
+
 - Keep the public `PSVSClockFrequency` ABI at exactly four 32-bit fields (16 bytes).
 - Reproduce the existing 500 MHz path (`444 MHz` first, then Pervasive ARM selector `15:16`).
 - Log raw ARM BaseClk registers and measure real CPU frequency with the Cortex-A9 PMU.
@@ -14,9 +36,9 @@ v1.4 source remains untouched and easy to compare/revert.
   known 4-bit multiplier beyond `0xF`.
 
 Public Vita code consistently tops out at the `0xF:0` ARM BaseClk setting for the normal
-source. The source-16 experiment below is a reverse-engineering hypothesis based on the
-fact that other devices inside the same Pervasive BaseClk block use bit 16 as a clock-source
-selector. It is not proof that the ARM clock uses the same encoding.
+source. The source-16 experiment is a reverse-engineering hypothesis based on the fact that
+other devices inside the same Pervasive BaseClk block use bit 16 as a clock-source selector.
+It is not proof that the ARM clock uses the same encoding.
 
 ## Build
 
@@ -34,10 +56,12 @@ build-vitasdk/PSVshellPlus_Kernel.skprx
 
 GitHub Actions builds the same target with the official `vitasdk/vitasdk:latest` image.
 
-## Normal hardware probe
+## Hardware observations
 
-Use the normal PSVshellPlus v1.4 shell/RCO and replace only the kernel module with the
-experimental `.skprx`.
+The PMU probe has already validated the known clock path on real hardware: the raw ARM
+BaseClk register was `0x7:0` near 333 MHz and `0xE:0` near 444 MHz, with PMU measurements
+close to the requested clocks. The alternate-source experiment has not yet been executed
+successfully because the shell compatibility problem prevented selecting the 500 MHz trigger.
 
 The probe log is written to:
 
@@ -45,51 +69,5 @@ The probe log is written to:
 ur0:data/PSVshell/arm_oc_probe.log
 ```
 
-It records requested/effective CPU MHz, PMU-measured MHz, raw ARM BaseClk values and the
-first BaseClk words for known clock points.
-
-## One-shot alternate-parent experiment
-
-The experiment is deliberately disabled by default. It never applies a >500 MHz candidate
-merely because the plugin was loaded.
-
-To arm exactly one attempt, create an empty file while the Vita is already running:
-
-```text
-ur0:data/PSVshell/arm_oc_source16.once
-```
-
-Wait at least 15 seconds after boot and then select **500 MHz** in the normal PSVshellPlus
-menu. The kernel consumes (deletes) the marker before touching the experimental source.
-If the system hard-crashes, the experiment therefore will not automatically repeat after
-reboot.
-
-The sequence is adaptive:
-
-1. Establish the known ~500 MHz `0xF:0` baseline and verify it with the PMU.
-2. Try alternate-source bit 16 with multiplier 1, a deliberately low clock point.
-3. Try multiplier 2 only if the first point is <=200 MHz, and require approximately linear
-   scaling (within 18%).
-4. Compute a multiplier in the known 1..15 range targeting about 550 MHz.
-5. Apply it only if the predicted clock is 510..575 MHz.
-6. Measure the result with the PMU. Keep it only when the real result is 510..600 MHz;
-   otherwise restore the exact saved 500 MHz BaseClk registers.
-
-Successful/failed stages appear as `EXPERIMENT` and `STATUS source16_*` lines in
-`arm_oc_probe.log`. If the source hypothesis is correct and the final clock is accepted,
-PSVshellPlus reports the PMU-measured CPU frequency through the existing v1.4 ABI until a
-new CPU clock is selected.
-
-This is still experimental overclocking. A wrong source interpretation can hard-freeze the
-console before software rollback is possible. The consumed marker prevents a repeated
-boot-loop, but it cannot make an invalid live clock transition harmless.
-
-## Current compatibility notes
-
-Clock control, lock state, FPS tracking and battery current are implemented. The first
-VitaSDK milestone returns zeroed memory statistics and reports Venezia load as unsupported;
-these non-overclock telemetry paths will be ported after the clock backend is hardware
-validated.
-
-The PID lock state is maintained in a kernel-side table instead of Sony's private KPLS API,
-which is not exposed by public VitaSDK headers.
+Future experiments should be moved to the standalone OC-probe module rather than replacing
+the official PSVshellPlus kernel.
