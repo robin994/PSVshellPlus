@@ -11,8 +11,8 @@ endif()
 project(PSVshellPlus_Kernel C)
 include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2 -std=gnu11 -ffunction-sections -fdata-sections -include psp2/kernel/error.h")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -nostdlib -Wl,--gc-sections")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2 -std=gnu11 -include psp2/kernel/error.h")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -nostdlib")
 
 add_executable(${PROJECT_NAME}
   src/main.c
