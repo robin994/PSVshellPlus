@@ -46,7 +46,7 @@ Start conservatively and select these CPU clocks in this order:
 After the test, copy:
 
 ```text
-ux0:data/psvshellplus/arm_oc_probe.log
+ur0:data/PSVshell/arm_oc_probe.log
 ```
 
 The log records:
