@@ -1,0 +1,28 @@
+PSVshellPlus_Kernel:
+  attributes: 6
+  version:
+    major: 1
+    minor: 0
+  main:
+    start: module_start
+    stop: module_stop
+  libraries:
+    PSVshellPlus_KernelForUser:
+      syscall: true
+      version: 1
+      functions:
+        - psvsSetArmClockFrequency
+        - psvsSetGpuClockFrequency
+        - psvsSetGpuXbarClockFrequency
+        - psvsSetBusClockFrequency
+        - psvsGetClockFrequency
+        - psvsGetVeneziaInfo
+        - psvsGetBatteryInfo
+        - psvsClockFrequencyLockProc
+        - psvsClockFrequencyUnlockProc
+        - psvsClockFrequencyIsLockedProc
+        - psvsSetFpsCounterTarget
+        - psvsGetFps
+        - psvsGetMem
+        - psvsSetRecommendedCasShift
+        - psvsSetClockingPid

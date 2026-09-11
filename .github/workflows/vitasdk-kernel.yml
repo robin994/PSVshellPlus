@@ -1,0 +1,40 @@
+name: VitaSDK Kernel CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'PSVshellPlus_Kernel_VitaSDK/**'
+      - '.github/workflows/vitasdk-kernel.yml'
+  pull_request:
+    paths:
+      - 'PSVshellPlus_Kernel_VitaSDK/**'
+      - '.github/workflows/vitasdk-kernel.yml'
+  workflow_dispatch:
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build with official VitaSDK image
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -w /src \
+            vitasdk/vitasdk:latest \
+            sh -lc 'apk add --no-cache cmake ninja >/dev/null && cmake -S PSVshellPlus_Kernel_VitaSDK -B build-vitasdk -G Ninja && cmake --build build-vitasdk'
+
+      - name: Show artifact
+        run: |
+          ls -lh build-vitasdk/PSVshellPlus_Kernel.skprx
+          sha256sum build-vitasdk/PSVshellPlus_Kernel.skprx
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: PSVshellPlus-Kernel-VitaSDK
+          path: build-vitasdk/PSVshellPlus_Kernel.skprx
+          if-no-files-found: error
