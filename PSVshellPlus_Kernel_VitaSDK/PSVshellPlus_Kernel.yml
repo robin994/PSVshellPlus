@@ -8,21 +8,22 @@ PSVshellPlus_Kernel:
     stop: module_stop
   libraries:
     PSVshellPlus_KernelForUser:
+      nid: 0x0366B343
       syscall: true
       version: 1
       functions:
-        - psvsSetArmClockFrequency
-        - psvsSetGpuClockFrequency
-        - psvsSetGpuXbarClockFrequency
-        - psvsSetBusClockFrequency
-        - psvsGetClockFrequency
-        - psvsGetVeneziaInfo
-        - psvsGetBatteryInfo
-        - psvsClockFrequencyLockProc
-        - psvsClockFrequencyUnlockProc
-        - psvsClockFrequencyIsLockedProc
-        - psvsSetFpsCounterTarget
-        - psvsGetFps
-        - psvsGetMem
-        - psvsSetRecommendedCasShift
-        - psvsSetClockingPid
+        - psvsSetArmClockFrequency: 0x698905FF
+        - psvsSetGpuClockFrequency: 0xC62F208E
+        - psvsSetGpuXbarClockFrequency: 0x99781BB3
+        - psvsSetBusClockFrequency: 0x44CCE133
+        - psvsGetClockFrequency: 0x3A7A3A18
+        - psvsGetVeneziaInfo: 0x3238B5F9
+        - psvsGetBatteryInfo: 0xD2DBF6A5
+        - psvsClockFrequencyLockProc: 0x3FB70892
+        - psvsClockFrequencyUnlockProc: 0xF1D9ADEF
+        - psvsClockFrequencyIsLockedProc: 0xD61C7203
+        - psvsSetFpsCounterTarget: 0x14547B62
+        - psvsGetFps: 0xEA9F9FDE
+        - psvsGetMem: 0xD018F9DE
+        - psvsSetRecommendedCasShift: 0xD7915088
+        - psvsSetClockingPid: 0xF299DCDA
