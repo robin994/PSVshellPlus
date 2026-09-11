@@ -10,6 +10,17 @@
 #define PSVS_STATE_SLOTS 32
 #define HOOK_COUNT 5
 
+#define SOURCE16_MARKER_PATH "ur0:data/PSVshell/arm_oc_source16.once"
+#define SOURCE16_BIT (1u << 16)
+#define SOURCE16_TARGET_MHZ 550u
+#define SOURCE16_MIN_TARGET_MHZ 510u
+#define SOURCE16_MAX_PREDICTED_MHZ 575u
+#define SOURCE16_MAX_MEASURED_MHZ 600u
+#define SOURCE16_MAX_M1_MHZ 200u
+#define SOURCE16_LINEAR_TOLERANCE_PERCENT 18u
+#define SOURCE16_SETTLE_US 5000
+#define SOURCE16_BOOT_GUARD_US 15000000LL
+
 int module_get_offset(SceUID pid, SceUID modid, int segidx, size_t offset, uintptr_t *addr);
 int module_get_export_func(SceUID pid, const char *modname, uint32_t libnid,
                            uint32_t funcnid, uintptr_t *func);
@@ -30,8 +41,10 @@ static volatile SceUID s_clocking_pid = -1;
 static volatile int s_fps_target = -1;
 static volatile int s_fps = 0;
 static SceInt64 s_last_frame_us = 0;
+static SceInt64 s_source16_ready_us = 0;
 
 static volatile uint32_t **s_baseclk_pp = NULL;
+static volatile uint32_t *s_baseclk = NULL;
 static int (*s_pervasive_arm_clock_select)(int mul, int ndiv) = NULL;
 static int (*s_gpu_get_internal)(int *corefreq, int *mpfreq) = NULL;
 static int (*s_gpu_set_internal)(int corefreq, int mpfreq) = NULL;
@@ -93,6 +106,154 @@ static int state_get_custom_cpu(SceUID pid)
         mhz = s_states[slot].custom_cpu_mhz;
     state_unlock();
     return mhz;
+}
+
+static void arm_baseclk_write(uint32_t raw_mul, uint32_t raw_div)
+{
+    if (!s_baseclk)
+        return;
+
+    s_baseclk[1] = raw_div;
+    __asm__ volatile("dmb" ::: "memory");
+    s_baseclk[0] = raw_mul;
+    __asm__ volatile("dmb" ::: "memory");
+    (void)s_baseclk[0];
+    (void)s_baseclk[1];
+    __asm__ volatile("dsb" ::: "memory");
+    __asm__ volatile("isb" ::: "memory");
+}
+
+static int consume_source16_marker(void)
+{
+    if (ksceKernelGetSystemTimeWide() < s_source16_ready_us)
+        return 0;
+
+    SceUID fd = ksceIoOpen(SOURCE16_MARKER_PATH, SCE_O_RDONLY, 0);
+    if (fd < 0)
+        return 0;
+
+    ksceIoClose(fd);
+
+    int ret = ksceIoRemove(SOURCE16_MARKER_PATH);
+    psvsProbeStatus("source16_marker_remove", ret);
+    if (ret < 0)
+        return 0;
+
+    psvsProbeStatus("source16_marker_consumed", 1);
+    return 1;
+}
+
+static int source16_linear_sample_ok(uint32_t m1, uint32_t m2)
+{
+    uint32_t expected = m1 * 2u;
+    uint32_t tolerance = (expected * SOURCE16_LINEAR_TOLERANCE_PERCENT + 99u) / 100u;
+    uint32_t low = expected > tolerance ? expected - tolerance : 0u;
+    uint32_t high = expected + tolerance;
+    return m2 >= low && m2 <= high;
+}
+
+static uint32_t source16_choose_target_mul(uint32_t unit_mhz, uint32_t *predicted_mhz)
+{
+    if (!unit_mhz)
+        return 0;
+
+    uint32_t mul = (SOURCE16_TARGET_MHZ + unit_mhz / 2u) / unit_mhz;
+    if (mul < 1u)
+        mul = 1u;
+    if (mul > 15u)
+        return 0;
+
+    uint32_t predicted = unit_mhz * mul;
+    if (predicted < SOURCE16_MIN_TARGET_MHZ && mul < 15u) {
+        uint32_t next = unit_mhz * (mul + 1u);
+        if (next <= SOURCE16_MAX_PREDICTED_MHZ) {
+            ++mul;
+            predicted = next;
+        }
+    }
+
+    if (predicted < SOURCE16_MIN_TARGET_MHZ || predicted > SOURCE16_MAX_PREDICTED_MHZ)
+        return 0;
+
+    if (predicted_mhz)
+        *predicted_mhz = predicted;
+    return mul;
+}
+
+static int run_source16_experiment(void)
+{
+    if (!s_baseclk) {
+        psvsProbeStatus("source16_no_baseclk", 1);
+        return 500;
+    }
+
+    const uint32_t saved_mul = s_baseclk[0];
+    const uint32_t saved_div = s_baseclk[1];
+    uint32_t baseline = psvsProbeMeasureCpuMhz();
+    psvsProbeExperimentSample("baseline500", saved_mul, saved_div, baseline, 500);
+
+    if (baseline < 430u || baseline > 540u) {
+        psvsProbeStatus("source16_bad_baseline", (int)baseline);
+        return 500;
+    }
+
+    arm_baseclk_write(SOURCE16_BIT | 1u, 0u);
+    ksceKernelDelayThread(SOURCE16_SETTLE_US);
+    uint32_t m1 = psvsProbeMeasureCpuMhz();
+    psvsProbeExperimentSample("source16-m1", s_baseclk[0], s_baseclk[1], m1, 0);
+
+    if (m1 < 10u || m1 > SOURCE16_MAX_M1_MHZ) {
+        arm_baseclk_write(saved_mul, saved_div);
+        ksceKernelDelayThread(SOURCE16_SETTLE_US);
+        psvsProbeStatus("source16_m1_rejected", (int)m1);
+        return 500;
+    }
+
+    if (m1 * 2u > 400u) {
+        arm_baseclk_write(saved_mul, saved_div);
+        ksceKernelDelayThread(SOURCE16_SETTLE_US);
+        psvsProbeStatus("source16_m2_guard", (int)(m1 * 2u));
+        return 500;
+    }
+
+    arm_baseclk_write(SOURCE16_BIT | 2u, 0u);
+    ksceKernelDelayThread(SOURCE16_SETTLE_US);
+    uint32_t m2 = psvsProbeMeasureCpuMhz();
+    psvsProbeExperimentSample("source16-m2", s_baseclk[0], s_baseclk[1], m2, m1 * 2u);
+
+    if (!source16_linear_sample_ok(m1, m2)) {
+        arm_baseclk_write(saved_mul, saved_div);
+        ksceKernelDelayThread(SOURCE16_SETTLE_US);
+        psvsProbeStatus("source16_nonlinear", (int)m2);
+        return 500;
+    }
+
+    arm_baseclk_write(saved_mul, saved_div);
+    ksceKernelDelayThread(SOURCE16_SETTLE_US);
+
+    uint32_t predicted = 0;
+    uint32_t target_mul = source16_choose_target_mul(m1, &predicted);
+    psvsProbeStatus("source16_target_mul", (int)target_mul);
+    psvsProbeStatus("source16_target_predicted", (int)predicted);
+    if (!target_mul)
+        return 500;
+
+    arm_baseclk_write(SOURCE16_BIT | target_mul, 0u);
+    ksceKernelDelayThread(SOURCE16_SETTLE_US);
+    uint32_t measured = psvsProbeMeasureCpuMhz();
+    psvsProbeExperimentSample("source16-target", s_baseclk[0], s_baseclk[1], measured, predicted);
+
+    if (measured < SOURCE16_MIN_TARGET_MHZ || measured > SOURCE16_MAX_MEASURED_MHZ) {
+        arm_baseclk_write(saved_mul, saved_div);
+        ksceKernelDelayThread(SOURCE16_SETTLE_US);
+        uint32_t restored = psvsProbeMeasureCpuMhz();
+        psvsProbeExperimentSample("source16-rollback", s_baseclk[0], s_baseclk[1], restored, 500);
+        psvsProbeStatus("source16_target_rejected", (int)measured);
+        return 500;
+    }
+
+    psvsProbeStatus("source16_success_mhz", (int)measured);
+    return (int)measured;
 }
 
 SceInt32 psvsClockFrequencyLockProc(SceUID pid, PsvsLockDevice type)
@@ -173,6 +334,11 @@ static int arm_clock_set_patched(int clock)
             if (ret >= 0) {
                 state_set_custom_cpu(pid, 500);
                 psvsProbeClockEvent(500, 500);
+
+                if (consume_source16_marker()) {
+                    int measured = run_source16_experiment();
+                    state_set_custom_cpu(pid, measured);
+                }
             }
             return ret;
         }
@@ -380,11 +546,13 @@ int module_start(SceSize argc, const void *args)
     module_get_export_func(KERNEL_PID, "SceSyscon", 0x60A35F64, 0x0826BA07,
                            (uintptr_t *)&s_syscon_get_battery_current);
 
-    volatile uint32_t *baseclk = s_baseclk_pp ? *s_baseclk_pp : NULL;
-    psvsProbeInit(baseclk);
+    s_baseclk = s_baseclk_pp ? *s_baseclk_pp : NULL;
+    s_source16_ready_us = ksceKernelGetSystemTimeWide() + SOURCE16_BOOT_GUARD_US;
+    psvsProbeInit(s_baseclk);
     psvsProbeStatus("pervasive_arm_clock_select", s_pervasive_arm_clock_select != NULL);
     psvsProbeStatus("gpu_get_internal", s_gpu_get_internal != NULL);
     psvsProbeStatus("gpu_set_internal", s_gpu_set_internal != NULL);
+    psvsProbeStatus("source16_boot_guard_seconds", (int)(SOURCE16_BOOT_GUARD_US / 1000000LL));
 
     s_hook_id[0] = taiHookFunctionExportForKernel(
         KERNEL_PID, &s_hook_ref[0], "SceDisplay", 0x9FED47AC, 0x16466675,
